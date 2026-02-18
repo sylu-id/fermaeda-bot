@@ -42,7 +42,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ['📋 Рекомендации', '📝 Списания'],
         ['📤 Сформировать заказы', '⏰ Расписание'],
-        ['🆘 Помощь']
+        ['🆘 Помощь'],
+        ['❌ Отмена']  # Кнопка принудительного выхода
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.effective_message.reply_text(
@@ -105,6 +106,9 @@ async def create_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edit_orders_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"edit_orders_start called by user {user_id}")
+
+    # Сбрасываем режим списания, если он был активен
+    context.user_data.pop('awaiting_writeoff', None)
 
     if user_id not in user_orders or not user_orders[user_id]:
         await update.effective_message.reply_text("У вас нет активных заказов. Сначала сформируйте их через '📤 Сформировать заказы'.")
@@ -174,6 +178,9 @@ async def handle_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def writeoff_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"writeoff_start called by user {update.effective_user.id}")
+    # Сбрасываем режим редактирования, если он был активен
+    context.user_data.pop('editing', None)
+
     await update.effective_message.reply_text(
         "Введите списание в формате: Товар = количество\n"
         "Например: Пшеничный хлеб = 2\n"
@@ -213,6 +220,20 @@ async def handle_writeoff_input(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['awaiting_writeoff'] = False
     logger.info("awaiting_writeoff reset to False")
 
+# Новая функция: принудительный выход из режимов
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сбрасывает все активные режимы (редактирование, списание)"""
+    user_id = update.effective_user.id
+    logger.info(f"cancel_command called by user {user_id}")
+
+    # Сбрасываем оба флага
+    context.user_data.pop('editing', None)
+    context.user_data.pop('awaiting_writeoff', None)
+
+    await update.effective_message.reply_text(
+        "❌ Все режимы отменены. Вы можете продолжить работу с главного меню."
+    )
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
 🆘 <b>Помощь по командам</b>
@@ -222,6 +243,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📤 <b>Сформировать заказы</b> – создаёт готовые сообщения для поставщиков.
 ✏️ <b>Редактировать</b> – изменяет количество в заказах.
 ⏰ <b>Расписание</b> – когда нужно заказывать у поставщиков.
+❌ <b>Отмена</b> – выйти из режима редактирования или ввода списания.
 🆘 <b>Помощь</b> – эта справка.
 
 <b>Редактирование заказов:</b>
@@ -270,27 +292,28 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    
+    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("schedule", schedule))
     app.add_handler(CommandHandler("recommend", recommend))
 
-    
+    # Кнопки главного меню
     app.add_handler(MessageHandler(filters.Text("📋 Рекомендации"), recommend))
     app.add_handler(MessageHandler(filters.Text("📝 Списания"), writeoff_start))
     app.add_handler(MessageHandler(filters.Text("📤 Сформировать заказы"), create_orders))
     app.add_handler(MessageHandler(filters.Text("✏️ Редактировать"), edit_orders_start))
     app.add_handler(MessageHandler(filters.Text("⏰ Расписание"), schedule))
+    app.add_handler(MessageHandler(filters.Text("❌ Отмена"), cancel_command))  # Новая кнопка
     app.add_handler(MessageHandler(filters.Text("🆘 Помощь"), help_command))
 
-    
+    # Общий обработчик текста (редактирование/ввод списания)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
-    
+    # Inline-кнопки
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    
+    # Планировщик напоминаний
     job_queue = app.job_queue
     job_queue.run_repeating(check_deadlines, interval=60, first=10)
 
